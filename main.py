@@ -1,5 +1,9 @@
+from matplotlib import pyplot as plt
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import GridSearchCV, cross_validate
+import seaborn as sns
 
 from kaggle_scoring_metric import score
 
@@ -16,14 +20,17 @@ print(f"   Train shape: {train.shape}, Test shape: {test.shape}")
 
 # date is not present in the test data and is only included for "solely for
 # exploratory data analysis"
-train_x = train.drop(columns=["class4", "date"])
-test_x = test.drop(columns=["date"])
+# partlybad also seems useless
+train_x = train.drop(columns=["class4", "date", "partlybad"])
+test_x = test.drop(columns=["date", "partlybad"])
 train_y = train["class4"]
 
-model = RandomForestClassifier(n_estimators=300, n_jobs=-1).fit(train_x, train_y)
+# model = RandomForestClassifier(n_estimators=300, n_jobs=-1, max_depth=8).fit(
+#     train_x, train_y
+# )
 
 
-def predict(X: pd.DataFrame):
+def predict(model: RandomForestClassifier, X: pd.DataFrame):
     predicted_class = model.predict(X)
     # returns values for probability of each class. "nonevent" is the 4th class
     # encoded so p("event") = sum of first 3 probabilities
@@ -38,8 +45,29 @@ def predict(X: pd.DataFrame):
     )
 
 
-# score on training set
-score(train[["class4"]], predict(train_x), "id")
+# random experimentation, not optimal and might not make any sense
+param_grid = [
+    {
+        "n_estimators": np.linspace(100, 1000, 4, dtype=np.int64),
+        "max_depth": [3, 7, 15, None],
+        "min_samples_leaf": np.linspace(1, 8, 4, dtype=np.int64),
+    }
+]
+gs = GridSearchCV(RandomForestClassifier(), param_grid, verbose=2, n_jobs=-1).fit(
+    train_x, train_y
+)
+print(gs.best_params_)
+print(gs.best_score_)
 
-test_prediction = predict(test_x)
+model = RandomForestClassifier(**gs.best_params_).fit(train_x, train_y)
+features_importances = sorted(
+    zip(model.feature_importances_, model.feature_names_in_), key=lambda x: x[0]
+)
+print("importances:", features_importances)
+
+
+# score on training set
+score(train[["class4"]], predict(model, train_x), "id")
+
+test_prediction = predict(model, test_x)
 test_prediction.to_csv("submission.csv", index_label="id")
