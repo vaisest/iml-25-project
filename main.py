@@ -1,11 +1,53 @@
-from matplotlib import pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LogisticRegression
+from sklearn import svm
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import GridSearchCV, cross_validate
-import seaborn as sns
-
+from sklearn.dummy import DummyClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.model_selection import cross_val_score, cross_validate
+from sklearn.metrics import mean_squared_error, accuracy_score, classification_report
 from kaggle_scoring_metric import score
+
+
+def predict(model, X: pd.DataFrame):
+    """Returns predictions as a DataFrame.
+
+    class4: Predicted class (nonevent, Ia, Ib or II)
+    p: Probability of an event occuring, sum of p(Ia, Ib, II)
+    """
+    predicted_class = model.predict(X)
+    predicted_proba = model.predict_proba(X)[:, 0:3].sum(axis=1)
+    return pd.DataFrame(
+        {
+            "class4": predicted_class,
+            "p": predicted_proba,
+        },
+        # Keep indices correct
+        index=X.index,
+    )
+
+
+def return_target_df(y: np.ndarray, X):
+    """Converts numpy array of targets back to dataframe
+
+    class4: True class (nonevent, Ia, Ib or II)
+    """
+    return pd.DataFrame(
+           {
+               "class4": y
+           },
+        # Keep indices correct
+        index=X.index,
+    )
+
+
+# ================================
+# Data Loading and pre-processing
+# ================================
 
 train_path = "data/train.csv"
 test_path = "data/test.csv"
@@ -15,59 +57,142 @@ train = pd.read_csv(train_path).set_index("id")
 test = pd.read_csv(test_path).set_index("id")
 
 print("Loaded train, test and sample submission")
-print(f"   Train shape: {train.shape}, Test shape: {test.shape}")
+print(f" Train shape: {train.shape}, Test shape: {test.shape}")
 
-
-# date is not present in the test data and is only included for "solely for
+# date is not present in the test data and is only included "solely for
 # exploratory data analysis"
 # partlybad also seems useless
 train_x = train.drop(columns=["class4", "date", "partlybad"])
 test_x = test.drop(columns=["date", "partlybad"])
-train_y = train["class4"]
 
-# model = RandomForestClassifier(n_estimators=300, n_jobs=-1, max_depth=8).fit(
-#     train_x, train_y
-# )
+# Optional: Keep only the mean measurements and reduce number of columns to 50
+train_x = train_x.loc[:, train_x.columns.str.contains('mean')]
+test_x = test_x.loc[:, test_x.columns.str.contains('mean')]
 
+# Target column
+train_y = train[["class4"]]
 
-def predict(model: RandomForestClassifier, X: pd.DataFrame):
-    predicted_class = model.predict(X)
-    # returns values for probability of each class. "nonevent" is the 4th class
-    # encoded so p("event") = sum of first 3 probabilities
-    predicted_proba = model.predict_proba(X)[:, 0:3].sum(axis=1)
-    return pd.DataFrame(
-        {
-            "class4": predicted_class,
-            "p": predicted_proba,
-        },
-        # keeps test data index correct
-        index=X.index,
-    )
+# Standard scaling (needed for PCA and LR/SVM)
+cols = train_x.columns
+sc = StandardScaler()
 
+# Convert back to dataframe format
+train_x_sc = pd.DataFrame(sc.fit_transform(train_x), columns=cols, index=train_x.index)
+test_x_sc = pd.DataFrame(sc.transform(test_x), columns=cols, index=test_x.index)
 
-# random experimentation, not optimal and might not make any sense
-param_grid = [
-    {
-        "n_estimators": np.linspace(100, 1000, 4, dtype=np.int64),
-        "max_depth": [3, 7, 15, None],
-        "min_samples_leaf": np.linspace(1, 8, 4, dtype=np.int64),
-    }
-]
-gs = GridSearchCV(RandomForestClassifier(), param_grid, verbose=2, n_jobs=-1).fit(
-    train_x, train_y
-)
-print(gs.best_params_)
-print(gs.best_score_)
+# Fit pca to reduce to ncomponents
+num_comp = 14
+pca = PCA(n_components=num_comp)
+pca.fit(train_x_sc)
 
-model = RandomForestClassifier(**gs.best_params_).fit(train_x, train_y)
-features_importances = sorted(
-    zip(model.feature_importances_, model.feature_names_in_), key=lambda x: x[0]
-)
-print("importances:", features_importances)
+# PCA transformation, convert back into dataframe of same format
+pca_cols = [f"PCA_{i+1}" for i in range(num_comp)]
+train_x_pca = pd.DataFrame(pca.transform(train_x_sc), columns=pca_cols, index=train_x_sc.index)
+test_x_pca = pd.DataFrame(pca.transform(test_x_sc), columns=pca_cols, index=test_x_sc.index)
 
 
-# score on training set
-score(train[["class4"]], predict(model, train_x), "id")
+# ================================
+# Model Training
+# ================================
 
-test_prediction = predict(model, test_x)
-test_prediction.to_csv("submission.csv", index_label="id")
+svc_hparams = {
+    "C": 5,
+    "kernel": "rbf",
+    "gamma": 0.001,
+    "probability": True,
+}
+
+X_train = train_x_pca
+y_train = np.array(train_y)[:, 0]
+
+# Label encoding (nonevent, Ia, Ib, II -> 0, 1, 2, 3)
+le = LabelEncoder()
+y_train = le.fit_transform(y_train)
+
+# Fit model, SVM classifier in this case
+clf = svm.SVC(**svc_hparams).fit(X_train,y_train)
+
+# k-fold CV
+cv_acc = np.mean(cross_val_score(clf, X_train, y_train, scoring="accuracy", cv=10))
+
+# Get (train) predictions (np array of encoded classes)
+y_pred = clf.predict(X_train)
+
+# Get (train) predictions (dataframe in submission-ready format)
+preds = predict(clf, X_train)
+target_df = return_target_df(le.inverse_transform(y_train), X_train)
+preds["class4"] = le.inverse_transform(preds["class4"])
+
+# Accuracy and scoring
+train_acc = accuracy_score(y_train, y_pred)
+print("\n==================================")
+print(f"Model metrics")
+print(f"Hyperparameters: {svc_hparams}")
+print(f"Train accuracy: {train_acc:.3f}")
+print(f"Cross validation accuracy: {cv_acc}")
+print(f"Score on training set:")
+score(target_df, preds, 'id')
+print("==================================\n")
+
+# ===================================
+# Generate pseudo labels
+# ===================================
+
+# Predict on test data to produce pseudo labels
+test_preds = predict(clf, test_x_pca)
+test_preds["class4"] = le.inverse_transform(test_preds["class4"])
+
+# Combine train_y and predicted test_y
+test_y_pred = test_preds.drop("p", axis=1)
+train_y = pd.concat([train_y, test_y_pred])
+
+# Combine train_x and test_x
+train_x = pd.concat([train_x, test_x])
+
+# Standard scaling and return as dataframe
+train_x_sc = pd.DataFrame(sc.fit_transform(train_x), columns=cols, index=train_x.index)
+
+# PCA fit on train + test data
+pca.fit(train_x_sc)
+train_x_pca = pd.DataFrame(pca.transform(train_x_sc), columns=pca_cols, index=train_x_sc.index)
+
+# ====================================
+# Model Training (using pseudo labels)
+# ====================================
+
+X_train = train_x_pca
+y_train = np.array(train_y)[:, 0]
+
+# Label encoding
+le = LabelEncoder()
+y_train = le.fit_transform(y_train)
+
+# Fit model
+clf = svm.SVC(**svc_hparams).fit(X_train,y_train)
+
+# k-fold CV
+cv_acc = np.mean(cross_val_score(clf, X_train, y_train, scoring="accuracy", cv=10))
+
+# Get (train) predictions (np array of encoded classes)
+y_pred = clf.predict(X_train)
+
+# Get (train) predictions (dataframe in submission-ready format)
+preds = predict(clf, X_train)
+target_df = return_target_df(le.inverse_transform(y_train), X_train)
+preds["class4"] = le.inverse_transform(preds["class4"])
+
+# Accuracy and scoring
+train_acc = accuracy_score(y_train, y_pred)
+print("\n==================================")
+print(f"Model metrics using pseudolabels")
+print(f"Train accuracy: {train_acc:.3f}")
+print(f"Cross validation accuracy: {cv_acc}")
+print(f"Score on training set:")
+score(target_df, preds, 'id')
+print("==================================\n")
+
+# Predict on test data and store to .csv file for submission
+test_preds = predict(clf, test_x_pca)
+test_preds["class4"] = le.inverse_transform(test_preds["class4"])
+test_preds.to_csv("submission.csv", index_label="id")
+print("Predictions saved to submission.csv.")
