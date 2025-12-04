@@ -72,9 +72,13 @@ def plot_feature_importances(model: RandomForestClassifier):
 
 def plot_classification_report(model, train_y, train_pred):
     print("\nTrain classification report (class4):")
-    print(classification_report(train_y, train_pred["class4"]))
+    print(classification_report(train_y, train_pred, zero_division=0))
 
-    cm = confusion_matrix(train_y, train_pred["class4"], labels=model.classes_)
+    cm = confusion_matrix(
+        train_y,
+        train_pred,
+        labels=model.classes_,
+    )
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=model.classes_)
     disp.plot(xticks_rotation=45)
     plt.title("Train confusion matrix (class4)")

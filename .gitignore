@@ -209,4 +209,13 @@ __marimo__/
 .idea/
 .vscode/
 
+
+# Project data files
+data/
+
+# Submission file(s)
 submission.csv
+submission_rf_baseline.csv
+
+# Notebook files
+*.ipynb
