@@ -18,14 +18,36 @@ from analysis import (
 )
 
 
-def predict(model, X: pd.DataFrame):
+def predict(model, X: pd.DataFrame, label_encoder=None):
     """Returns predictions as a DataFrame.
 
     class4: Predicted class (nonevent, Ia, Ib or II)
     p: Probability of an event occuring, sum of p(Ia, Ib, II)
     """
     predicted_class = model.predict(X)
-    predicted_proba = model.predict_proba(X)[:, 0:3].sum(axis=1)
+    predicted_proba_matrix = model.predict_proba(X)
+    
+    # Find which class is 'nonevent' if label_encoder is provided
+    if label_encoder is not None:
+        # LabelEncoder sorts classes alphabetically: Ia, Ib, II, nonevent
+        # So nonevent should be the last class (index 3)
+        # Sum probabilities for all classes except nonevent
+        nonevent_idx = None
+        for idx, label in enumerate(label_encoder.classes_):
+            if label == "nonevent":
+                nonevent_idx = idx
+                break
+        if nonevent_idx is not None:
+            # Sum all probabilities except nonevent
+            event_indices = [i for i in range(len(label_encoder.classes_)) if i != nonevent_idx]
+            predicted_proba = predicted_proba_matrix[:, event_indices].sum(axis=1)
+        else:
+            # Fallback: assume first 3 classes are events (for backward compatibility)
+            predicted_proba = predicted_proba_matrix[:, 0:3].sum(axis=1)
+    else:
+        # Fallback: assume first 3 classes are events (Ia, Ib, II)
+        predicted_proba = predicted_proba_matrix[:, 0:3].sum(axis=1)
+    
     return pd.DataFrame(
         {
             "class4": predicted_class,
@@ -126,7 +148,7 @@ cv_acc = np.mean(cross_val_score(clf, X_train, y_train, scoring="accuracy", cv=1
 y_pred = clf.predict(X_train)
 
 # Get (train) predictions (dataframe in submission-ready format)
-preds = predict(clf, X_train)
+preds = predict(clf, X_train, label_encoder=le)
 target_df = return_target_df(le.inverse_transform(y_train), X_train)
 preds["class4"] = le.inverse_transform(preds["class4"])
 
@@ -146,7 +168,7 @@ print("==================================\n")
 # ===================================
 
 # Predict on test data to produce pseudo labels
-test_preds = predict(clf, test_x_pca)
+test_preds = predict(clf, test_x_pca, label_encoder=le)
 test_preds["class4"] = le.inverse_transform(test_preds["class4"])
 
 # Combine train_y and predicted test_y
@@ -164,6 +186,14 @@ pca.fit(train_x_sc)
 train_x_pca = pd.DataFrame(
     pca.transform(train_x_sc), columns=pca_cols, index=train_x_sc.index
 )
+
+
+test_x_sc = pd.DataFrame(sc.transform(test_x), columns=cols, index=test_x.index)
+test_x_pca = pd.DataFrame(
+    pca.transform(test_x_sc), columns=pca_cols, index=test_x.index
+)
+
+
 
 # ====================================
 # Model Training (using pseudo labels)
@@ -186,7 +216,7 @@ cv_acc = np.mean(cross_val_score(clf, X_train, y_train, scoring="accuracy", cv=1
 y_pred = clf.predict(X_train)
 
 # Get (train) predictions (dataframe in submission-ready format)
-preds = predict(clf, X_train)
+preds = predict(clf, X_train, label_encoder=le)
 target_df = return_target_df(le.inverse_transform(y_train), X_train)
 preds["class4"] = le.inverse_transform(preds["class4"])
 
@@ -201,15 +231,15 @@ score(target_df, preds, "id")
 print("==================================\n")
 
 # Predict on test data and store to .csv file for submission
-test_preds = predict(clf, test_x_pca)
+test_preds = predict(clf, test_x_pca, label_encoder=le)
 test_preds["class4"] = le.inverse_transform(test_preds["class4"])
 test_preds.to_csv("submission.csv", index_label="id")
 print("Predictions saved to submission.csv.")
 
 # plots
 plot_training_data(train)
-plot_classification_report(clf, y_train, y_pred)
-# plot_feature_importances(clf)
+plot_classification_report(clf, y_train, y_pred, label_encoder=le)
+plot_feature_importances(clf, pca=pca)
 print(
     "Saved figures: class4_distribution.png, class2_distribution.png, correlation_heatmap.png, feature_importances_top20.png, confusion_matrix_train.png"
 )

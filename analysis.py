@@ -51,35 +51,84 @@ def plot_training_data(train: pd.DataFrame):
         plt.close()
 
 
-def plot_feature_importances(model: RandomForestClassifier):
-    features_importances = sorted(
-        zip(model.feature_importances_, model.feature_names_in_), key=lambda x: x[0]
-    )
+def plot_feature_importances(model, pca=None):
+    """
+    Plot feature importances.
+    For RandomForest: uses feature_importances_
+    For other models with PCA: uses explained_variance_ratio_ from PCA
+    """
+    if hasattr(model, "feature_importances_"):
+        # RandomForest or similar
+        features_importances = sorted(
+            zip(model.feature_importances_, model.feature_names_in_), key=lambda x: x[0]
+        )
+        print("Feature importances:", features_importances)
 
-    print("importances:", features_importances)
+        top = features_importances[-20:]
+        imp_vals = [v for v, _ in top]
+        imp_names = [n for _, n in top]
 
-    top = features_importances[-20:]
-    imp_vals = [v for v, _ in top]
-    imp_names = [n for _, n in top]
+        plt.figure(figsize=(7, 6))
+        sns.barplot(x=imp_vals, y=imp_names)
+        plt.title("Top 20 feature importances")
+        plt.tight_layout()
+        plt.savefig("feature_importances_top20.png")
+        plt.close()
+    elif pca is not None:
+        # Use PCA explained variance ratio
+        pca_importances = sorted(
+            zip(pca.explained_variance_ratio_, [f"PCA_{i+1}" for i in range(len(pca.explained_variance_ratio_))]),
+            key=lambda x: x[0]
+        )
+        print("PCA component importances (explained variance ratio):", pca_importances)
 
-    plt.figure(figsize=(7, 6))
-    sns.barplot(x=imp_vals, y=imp_names)
-    plt.title("Top 20 feature importances")
-    plt.tight_layout()
-    plt.savefig("feature_importances_top20.png")
-    plt.close()
+        top = pca_importances[-20:] if len(pca_importances) > 20 else pca_importances
+        imp_vals = [v for v, _ in top]
+        imp_names = [n for _, n in top]
+
+        plt.figure(figsize=(7, 6))
+        sns.barplot(x=imp_vals, y=imp_names)
+        plt.title("Top 20 PCA component importances (explained variance ratio)")
+        plt.tight_layout()
+        plt.savefig("feature_importances_top20.png")
+        plt.close()
+    else:
+        print("Warning: Model does not support feature importances and no PCA provided. Skipping plot.")
 
 
-def plot_classification_report(model, train_y, train_pred):
+def plot_classification_report(model, train_y, train_pred, label_encoder=None):
+    """
+    Plot classification report and confusion matrix.
+    
+    Args:
+        model: Trained classifier
+        train_y: True labels (can be encoded or original)
+        train_pred: Predicted labels (can be encoded or original)
+        label_encoder: Optional LabelEncoder to convert encoded labels back to original
+    """
+    # Convert encoded labels back to original if label_encoder is provided
+    if label_encoder is not None:
+        train_y_original = label_encoder.inverse_transform(train_y)
+        train_pred_original = label_encoder.inverse_transform(train_pred)
+        display_labels = label_encoder.classes_
+    else:
+        train_y_original = train_y
+        train_pred_original = train_pred
+        # Try to get labels from model
+        if hasattr(model, "classes_"):
+            display_labels = model.classes_
+        else:
+            display_labels = sorted(set(train_y_original) | set(train_pred_original))
+
     print("\nTrain classification report (class4):")
-    print(classification_report(train_y, train_pred, zero_division=0))
+    print(classification_report(train_y_original, train_pred_original, zero_division=0))
 
     cm = confusion_matrix(
-        train_y,
-        train_pred,
-        labels=model.classes_,
+        train_y_original,
+        train_pred_original,
+        labels=display_labels,
     )
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=model.classes_)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=display_labels)
     disp.plot(xticks_rotation=45)
     plt.title("Train confusion matrix (class4)")
     plt.tight_layout()
