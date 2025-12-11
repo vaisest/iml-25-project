@@ -1,20 +1,17 @@
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
-from sklearn.linear_model import LogisticRegression
 from sklearn import svm
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.dummy import DummyClassifier
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.model_selection import cross_val_score, cross_validate
-from sklearn.metrics import mean_squared_error, accuracy_score, classification_report
+from sklearn.model_selection import cross_val_score
+from sklearn.metrics import accuracy_score
 from kaggle_scoring_metric import score
 from analysis import (
+    analyse_pca,
     plot_training_data,
     plot_feature_importances,
     plot_classification_report,
+    plot_test_set_results,
 )
 
 
@@ -26,7 +23,7 @@ def predict(model, X: pd.DataFrame, label_encoder=None):
     """
     predicted_class = model.predict(X)
     predicted_proba_matrix = model.predict_proba(X)
-    
+
     # Find which class is 'nonevent' if label_encoder is provided
     if label_encoder is not None:
         # LabelEncoder sorts classes alphabetically: Ia, Ib, II, nonevent
@@ -39,7 +36,9 @@ def predict(model, X: pd.DataFrame, label_encoder=None):
                 break
         if nonevent_idx is not None:
             # Sum all probabilities except nonevent
-            event_indices = [i for i in range(len(label_encoder.classes_)) if i != nonevent_idx]
+            event_indices = [
+                i for i in range(len(label_encoder.classes_)) if i != nonevent_idx
+            ]
             predicted_proba = predicted_proba_matrix[:, event_indices].sum(axis=1)
         else:
             # Fallback: assume first 3 classes are events (for backward compatibility)
@@ -47,7 +46,7 @@ def predict(model, X: pd.DataFrame, label_encoder=None):
     else:
         # Fallback: assume first 3 classes are events (Ia, Ib, II)
         predicted_proba = predicted_proba_matrix[:, 0:3].sum(axis=1)
-    
+
     return pd.DataFrame(
         {
             "class4": predicted_class,
@@ -194,7 +193,6 @@ test_x_pca = pd.DataFrame(
 )
 
 
-
 # ====================================
 # Model Training (using pseudo labels)
 # ====================================
@@ -236,6 +234,7 @@ test_preds["class4"] = le.inverse_transform(test_preds["class4"])
 test_preds.to_csv("submission.csv", index_label="id")
 print("Predictions saved to submission.csv.")
 
+
 # plots
 plot_training_data(train)
 plot_classification_report(clf, y_train, y_pred, label_encoder=le)
@@ -243,3 +242,5 @@ plot_feature_importances(clf, pca=pca)
 print(
     "Saved figures: class4_distribution.png, class2_distribution.png, correlation_heatmap.png, feature_importances_top20.png, confusion_matrix_train.png"
 )
+analyse_pca(pca, train_x_sc.columns)
+plot_test_set_results(test_preds, test_x_sc)
